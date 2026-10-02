@@ -4,6 +4,7 @@ import "testing"
 
 func TestAddAndListTransactions(t *testing.T) {
 	transactions = nil
+	budgets = map[string]Budget{}
 
 	first := Transaction{Amount: 100, Category: "Продукты"}
 	second := Transaction{Amount: 250, Category: "Транспорт"}
@@ -31,6 +32,7 @@ func TestAddAndListTransactions(t *testing.T) {
 
 func TestAddTransactionRejectsZeroAmount(t *testing.T) {
 	transactions = nil
+	budgets = map[string]Budget{}
 
 	err := AddTransaction(Transaction{Amount: 0, Category: "Продукты"})
 	if err == nil {

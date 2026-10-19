@@ -3,19 +3,20 @@ package main
 import (
 	"log"
 	"net/http"
+
+	"gateway/internal/api"
 )
 
 func main() {
-	http.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
+	mux := http.NewServeMux()
 
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("pong"))
-	})
+	mux.Handle("POST /api/transactions", http.HandlerFunc(api.HandleCreateTransaction))
+	mux.Handle("GET /api/transactions", http.HandlerFunc(api.HandleListTransactions))
+	mux.Handle("POST /api/budgets", http.HandlerFunc(api.HandleCreateBudget))
+	mux.Handle("GET /api/budgets", http.HandlerFunc(api.HandleListBudgets))
+
+	handler := api.LoggingMiddleware(mux)
 
 	log.Println("Gateway service started on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(":8080", handler))
 }

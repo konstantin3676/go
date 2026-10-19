@@ -42,3 +42,29 @@ func TestAddTransactionRejectsZeroAmount(t *testing.T) {
 		t.Fatal("AddTransaction() saved a transaction with a zero amount")
 	}
 }
+
+func TestAddTransactionRejectsNegativeAmount(t *testing.T) {
+	transactions = nil
+	budgets = map[string]Budget{}
+
+	err := AddTransaction(Transaction{Amount: -50, Category: "Продукты"})
+	if err == nil {
+		t.Fatal("AddTransaction() returned nil for a negative amount")
+	}
+	if len(ListTransactions()) != 0 {
+		t.Fatal("AddTransaction() saved a transaction with a negative amount")
+	}
+}
+
+func TestAddTransactionRejectsEmptyCategory(t *testing.T) {
+	transactions = nil
+	budgets = map[string]Budget{}
+
+	err := AddTransaction(Transaction{Amount: 100, Category: ""})
+	if err == nil {
+		t.Fatal("AddTransaction() returned nil for an empty category")
+	}
+	if len(ListTransactions()) != 0 {
+		t.Fatal("AddTransaction() saved a transaction with an empty category")
+	}
+}

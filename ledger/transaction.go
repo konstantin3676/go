@@ -13,11 +13,21 @@ type Transaction struct {
 	Date        string
 }
 
+func (t Transaction) Validate() error {
+	if t.Amount <= 0 {
+		return errors.New("transaction amount must be positive")
+	}
+	if t.Category == "" {
+		return errors.New("transaction category must not be empty")
+	}
+	return nil
+}
+
 var transactions = []Transaction{}
 
 func AddTransaction(tx Transaction) error {
-	if tx.Amount == 0 {
-		return errors.New("transaction amount must not be zero")
+	if err := tx.Validate(); err != nil {
+		return err
 	}
 
 	if budget, exists := budgets[tx.Category]; exists {

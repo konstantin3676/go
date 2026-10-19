@@ -14,10 +14,24 @@ type Budget struct {
 	Limit    float64 `json:"limit"`
 }
 
+func (b Budget) Validate() error {
+	if b.Limit <= 0 {
+		return errors.New("budget limit must be positive")
+	}
+	if b.Category == "" {
+		return errors.New("budget category must not be empty")
+	}
+	return nil
+}
+
 var budgets = map[string]Budget{}
 
-func SetBudget(b Budget) {
+func SetBudget(b Budget) error {
+	if err := b.Validate(); err != nil {
+		return err
+	}
 	budgets[b.Category] = b
+	return nil
 }
 
 func LoadBudgets(r io.Reader) error {
@@ -27,7 +41,9 @@ func LoadBudgets(r io.Reader) error {
 	}
 
 	for _, budget := range loadedBudgets {
-		SetBudget(budget)
+		if err := SetBudget(budget); err != nil {
+			return fmt.Errorf("could not set budget: %w", err)
+		}
 	}
 
 	return nil

@@ -9,8 +9,12 @@ import (
 func TestSetBudgetAddsAndUpdatesBudget(t *testing.T) {
 	budgets = map[string]Budget{}
 
-	SetBudget(Budget{Category: "Продукты", Limit: 1000})
-	SetBudget(Budget{Category: "Продукты", Limit: 1500})
+	if err := SetBudget(Budget{Category: "Продукты", Limit: 1000}); err != nil {
+		t.Fatalf("SetBudget() returned an error: %v", err)
+	}
+	if err := SetBudget(Budget{Category: "Продукты", Limit: 1500}); err != nil {
+		t.Fatalf("SetBudget() returned an error: %v", err)
+	}
 
 	got, exists := budgets["Продукты"]
 	if !exists {
@@ -21,10 +25,46 @@ func TestSetBudgetAddsAndUpdatesBudget(t *testing.T) {
 	}
 }
 
+func TestSetBudgetRejectsZeroLimit(t *testing.T) {
+	budgets = map[string]Budget{}
+
+	err := SetBudget(Budget{Category: "Продукты", Limit: 0})
+	if err == nil {
+		t.Fatal("SetBudget() returned nil for a zero limit")
+	}
+	if _, exists := budgets["Продукты"]; exists {
+		t.Fatal("SetBudget() saved a budget with zero limit")
+	}
+}
+
+func TestSetBudgetRejectsNegativeLimit(t *testing.T) {
+	budgets = map[string]Budget{}
+
+	err := SetBudget(Budget{Category: "Продукты", Limit: -100})
+	if err == nil {
+		t.Fatal("SetBudget() returned nil for a negative limit")
+	}
+	if _, exists := budgets["Продукты"]; exists {
+		t.Fatal("SetBudget() saved a budget with negative limit")
+	}
+}
+
+func TestSetBudgetRejectsEmptyCategory(t *testing.T) {
+	budgets = map[string]Budget{}
+
+	err := SetBudget(Budget{Category: "", Limit: 1000})
+	if err == nil {
+		t.Fatal("SetBudget() returned nil for an empty category")
+	}
+	if len(budgets) != 0 {
+		t.Fatal("SetBudget() saved a budget with empty category")
+	}
+}
+
 func TestAddTransactionChecksBudget(t *testing.T) {
 	transactions = nil
 	budgets = map[string]Budget{}
-	SetBudget(Budget{Category: "Продукты", Limit: 500})
+	_ = SetBudget(Budget{Category: "Продукты", Limit: 500})
 
 	if err := AddTransaction(Transaction{Amount: 200, Category: "Продукты"}); err != nil {
 		t.Fatalf("transaction within budget returned an error: %v", err)
@@ -76,5 +116,35 @@ func TestLoadBudgetsRejectsInvalidJSON(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "could not parse budgets JSON") {
 		t.Fatalf("LoadBudgets() returned an unclear error: %v", err)
+	}
+}
+
+func TestLoadBudgetsRejectsInvalidBudget(t *testing.T) {
+	budgets = map[string]Budget{}
+	input := `[
+		{"category": "", "limit": 1000}
+	]`
+
+	err := LoadBudgets(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("LoadBudgets() returned nil for an invalid budget")
+	}
+	if !strings.Contains(err.Error(), "could not set budget") {
+		t.Fatalf("LoadBudgets() returned an unclear error: %v", err)
+	}
+}
+
+func TestCheckValid(t *testing.T) {
+	if err := CheckValid(Transaction{Amount: 100, Category: "Продукты"}); err != nil {
+		t.Fatalf("CheckValid(valid tx) returned an error: %v", err)
+	}
+	if err := CheckValid(Budget{Category: "Продукты", Limit: 500}); err != nil {
+		t.Fatalf("CheckValid(valid budget) returned an error: %v", err)
+	}
+	if err := CheckValid(Transaction{Amount: 0, Category: "Продукты"}); err == nil {
+		t.Fatal("CheckValid(zero amount) returned nil")
+	}
+	if err := CheckValid(Budget{Category: "", Limit: 0}); err == nil {
+		t.Fatal("CheckValid(invalid budget) returned nil")
 	}
 }

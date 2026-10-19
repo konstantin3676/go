@@ -43,4 +43,18 @@ func main() {
 		fmt.Printf("ID: %d, amount: %.2f, category: %s, description: %s, date: %s\n",
 			tx.ID, tx.Amount, tx.Category, tx.Description, tx.Date)
 	}
+
+	fmt.Println("\n--- Validatable demo ---")
+	validTx := Transaction{Amount: 500, Category: "Продукты", Date: "2026-10-05"}
+	invalidTx := Transaction{Amount: -100, Category: "", Date: "2026-10-05"}
+	validBudget := Budget{Category: "Продукты", Limit: 1000}
+	invalidBudget := Budget{Category: "", Limit: 0}
+
+	for _, v := range []Validatable{validTx, invalidTx, validBudget, invalidBudget} {
+		if err := CheckValid(v); err != nil {
+			fmt.Printf("CheckValid: %v\n", err)
+		} else {
+			fmt.Printf("CheckValid: passed for %T\n", v)
+		}
+	}
 }

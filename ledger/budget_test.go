@@ -7,7 +7,8 @@ import (
 )
 
 func TestSetBudgetAddsAndUpdatesBudget(t *testing.T) {
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 
 	if err := SetBudget(Budget{Category: "Продукты", Limit: 1000}); err != nil {
 		t.Fatalf("SetBudget() returned an error: %v", err)
@@ -26,7 +27,8 @@ func TestSetBudgetAddsAndUpdatesBudget(t *testing.T) {
 }
 
 func TestSetBudgetRejectsZeroLimit(t *testing.T) {
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 
 	err := SetBudget(Budget{Category: "Продукты", Limit: 0})
 	if err == nil {
@@ -38,7 +40,8 @@ func TestSetBudgetRejectsZeroLimit(t *testing.T) {
 }
 
 func TestSetBudgetRejectsNegativeLimit(t *testing.T) {
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 
 	err := SetBudget(Budget{Category: "Продукты", Limit: -100})
 	if err == nil {
@@ -50,7 +53,8 @@ func TestSetBudgetRejectsNegativeLimit(t *testing.T) {
 }
 
 func TestSetBudgetRejectsEmptyCategory(t *testing.T) {
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 
 	err := SetBudget(Budget{Category: "", Limit: 1000})
 	if err == nil {
@@ -62,8 +66,8 @@ func TestSetBudgetRejectsEmptyCategory(t *testing.T) {
 }
 
 func TestAddTransactionChecksBudget(t *testing.T) {
-	transactions = nil
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 	_ = SetBudget(Budget{Category: "Продукты", Limit: 500})
 
 	if err := AddTransaction(Transaction{Amount: 200, Category: "Продукты"}); err != nil {
@@ -83,8 +87,8 @@ func TestAddTransactionChecksBudget(t *testing.T) {
 }
 
 func TestAddTransactionWithoutBudget(t *testing.T) {
-	transactions = nil
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 
 	if err := AddTransaction(Transaction{Amount: 10000, Category: "Образование"}); err != nil {
 		t.Fatalf("transaction without a budget returned an error: %v", err)
@@ -92,7 +96,8 @@ func TestAddTransactionWithoutBudget(t *testing.T) {
 }
 
 func TestLoadBudgets(t *testing.T) {
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 	input := `[
 		{"category": "Продукты", "limit": 5000},
 		{"category": "Транспорт", "limit": 1000}
@@ -110,6 +115,9 @@ func TestLoadBudgets(t *testing.T) {
 }
 
 func TestLoadBudgetsRejectsInvalidJSON(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
 	err := LoadBudgets(strings.NewReader(`[{"category":`))
 	if err == nil {
 		t.Fatal("LoadBudgets() returned nil for invalid JSON")
@@ -120,7 +128,8 @@ func TestLoadBudgetsRejectsInvalidJSON(t *testing.T) {
 }
 
 func TestLoadBudgetsRejectsInvalidBudget(t *testing.T) {
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 	input := `[
 		{"category": "", "limit": 1000}
 	]`

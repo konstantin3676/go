@@ -3,8 +3,8 @@ package ledger
 import "testing"
 
 func TestAddAndListTransactions(t *testing.T) {
-	transactions = nil
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 
 	first := Transaction{Amount: 100, Category: "Продукты"}
 	second := Transaction{Amount: 250, Category: "Транспорт"}
@@ -31,8 +31,8 @@ func TestAddAndListTransactions(t *testing.T) {
 }
 
 func TestAddTransactionRejectsZeroAmount(t *testing.T) {
-	transactions = nil
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 
 	err := AddTransaction(Transaction{Amount: 0, Category: "Продукты"})
 	if err == nil {
@@ -44,8 +44,8 @@ func TestAddTransactionRejectsZeroAmount(t *testing.T) {
 }
 
 func TestAddTransactionRejectsNegativeAmount(t *testing.T) {
-	transactions = nil
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 
 	err := AddTransaction(Transaction{Amount: -50, Category: "Продукты"})
 	if err == nil {
@@ -57,8 +57,8 @@ func TestAddTransactionRejectsNegativeAmount(t *testing.T) {
 }
 
 func TestAddTransactionRejectsEmptyCategory(t *testing.T) {
-	transactions = nil
-	budgets = map[string]Budget{}
+	Reset()
+	t.Cleanup(Reset)
 
 	err := AddTransaction(Transaction{Amount: 100, Category: ""})
 	if err == nil {

@@ -56,6 +56,25 @@ cd ../ledger
 go test ./...
 ```
 
+### Тесты и покрытие
+
+Запустить тесты с построением отчёта о покрытии можно из корня репозитория:
+
+```bash
+cd ledger
+go test ./... -cover -coverprofile=cover.out
+go tool cover -html=cover.out -o cover.html
+
+cd ../gateway
+go test ./... -cover -coverprofile=cover.out
+go tool cover -html=cover.out -o cover.html
+```
+
+HTML-отчёт будет сохранён в `cover.html` соответствующего модуля. Текущее
+покрытие тестами: пакет домена `ledger` — **91.7%**, HTTP-пакет
+`gateway/internal/api` — **84.4%** (весь модуль `gateway`, включая нетестируемый
+`main`, — **56.2%**).
+
 ## API Gateway
 
 Все ответы возвращаются с заголовком `Content-Type: application/json; charset=utf-8`. Ошибки возвращаются в формате `{"error":"описание ошибки"}`.

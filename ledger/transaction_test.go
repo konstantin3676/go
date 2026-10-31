@@ -16,16 +16,23 @@ func TestAddAndListTransactions(t *testing.T) {
 		t.Fatalf("AddTransaction(second) returned an error: %v", err)
 	}
 
-	got := ListTransactions()
+	got, err := ListTransactions()
+	if err != nil {
+		t.Fatalf("ListTransactions() returned an error: %v", err)
+	}
 	if len(got) != 2 {
 		t.Fatalf("ListTransactions() returned %d transactions, want 2", len(got))
 	}
-	if got[0].ID != 1 || got[1].ID != 2 {
-		t.Fatalf("transaction IDs are %d and %d, want 1 and 2", got[0].ID, got[1].ID)
+	if got[0].ID != 2 || got[1].ID != 1 {
+		t.Fatalf("transaction IDs are %d and %d, want 2 and 1", got[0].ID, got[1].ID)
 	}
 
 	got[0].Amount = 999
-	if ListTransactions()[0].Amount != first.Amount {
+	current, err := ListTransactions()
+	if err != nil {
+		t.Fatalf("ListTransactions() returned an error: %v", err)
+	}
+	if current[0].Amount != second.Amount {
 		t.Fatal("ListTransactions() returned the internal storage instead of a copy")
 	}
 }
@@ -38,7 +45,11 @@ func TestAddTransactionRejectsZeroAmount(t *testing.T) {
 	if err == nil {
 		t.Fatal("AddTransaction() returned nil for a zero amount")
 	}
-	if len(ListTransactions()) != 0 {
+	transactions, err := ListTransactions()
+	if err != nil {
+		t.Fatalf("ListTransactions() returned an error: %v", err)
+	}
+	if len(transactions) != 0 {
 		t.Fatal("AddTransaction() saved a transaction with a zero amount")
 	}
 }
@@ -51,7 +62,11 @@ func TestAddTransactionRejectsNegativeAmount(t *testing.T) {
 	if err == nil {
 		t.Fatal("AddTransaction() returned nil for a negative amount")
 	}
-	if len(ListTransactions()) != 0 {
+	transactions, err := ListTransactions()
+	if err != nil {
+		t.Fatalf("ListTransactions() returned an error: %v", err)
+	}
+	if len(transactions) != 0 {
 		t.Fatal("AddTransaction() saved a transaction with a negative amount")
 	}
 }
@@ -64,7 +79,11 @@ func TestAddTransactionRejectsEmptyCategory(t *testing.T) {
 	if err == nil {
 		t.Fatal("AddTransaction() returned nil for an empty category")
 	}
-	if len(ListTransactions()) != 0 {
+	transactions, err := ListTransactions()
+	if err != nil {
+		t.Fatalf("ListTransactions() returned an error: %v", err)
+	}
+	if len(transactions) != 0 {
 		t.Fatal("AddTransaction() saved a transaction with an empty category")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"ledger"
 )
@@ -22,7 +23,8 @@ func HandleCreateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ledger.AddTransaction(tx); err != nil {
+	created, err := ledger.AddTransactionAndReturn(tx)
+	if err != nil {
 		if errors.Is(err, ledger.ErrBudgetExceeded) {
 			writeError(w, http.StatusConflict, "budget exceeded")
 			return
@@ -31,14 +33,15 @@ func HandleCreateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transactions := ledger.ListTransactions()
-	created := transactions[len(transactions)-1]
-
 	writeJSON(w, http.StatusCreated, NewTransactionResponse(created))
 }
 
 func HandleListTransactions(w http.ResponseWriter, r *http.Request) {
-	transactions := ledger.ListTransactions()
+	transactions, err := ledger.ListTransactions()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	response := make([]TransactionResponse, 0, len(transactions))
 	for _, tx := range transactions {
@@ -71,7 +74,11 @@ func HandleCreateBudget(w http.ResponseWriter, r *http.Request) {
 }
 
 func HandleListBudgets(w http.ResponseWriter, r *http.Request) {
-	budgets := ledger.ListBudgets()
+	budgets, err := ledger.ListBudgets()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	response := make([]BudgetResponse, 0, len(budgets))
 	for _, b := range budgets {
@@ -79,4 +86,27 @@ func HandleListBudgets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+func HandleReportSummary(w http.ResponseWriter, r *http.Request) {
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	if from == "" || to == "" {
+		writeError(w, http.StatusBadRequest, "from and to query parameters are required")
+		return
+	}
+	fromDate, fromErr := time.Parse("2006-01-02", from)
+	toDate, toErr := time.Parse("2006-01-02", to)
+	if fromErr != nil || toErr != nil || fromDate.After(toDate) {
+		writeError(w, http.StatusBadRequest, "from and to must be valid dates with from <= to")
+		return
+	}
+
+	report, err := ledger.GetReportSummary(r.Context(), from, to)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, report)
 }

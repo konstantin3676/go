@@ -81,7 +81,11 @@ func TestAddTransactionChecksBudget(t *testing.T) {
 	if !errors.Is(err, ErrBudgetExceeded) {
 		t.Fatalf("transaction exceeding budget returned %v, want ErrBudgetExceeded", err)
 	}
-	if len(ListTransactions()) != 2 {
+	transactions, listErr := ListTransactions()
+	if listErr != nil {
+		t.Fatalf("ListTransactions() returned an error: %v", listErr)
+	}
+	if len(transactions) != 2 {
 		t.Fatal("transaction exceeding budget was saved")
 	}
 }

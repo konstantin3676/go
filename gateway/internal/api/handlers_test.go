@@ -16,6 +16,7 @@ func testRouter() http.Handler {
 	mux.Handle("GET /api/transactions", http.HandlerFunc(HandleListTransactions))
 	mux.Handle("POST /api/budgets", http.HandlerFunc(HandleCreateBudget))
 	mux.Handle("GET /api/budgets", http.HandlerFunc(HandleListBudgets))
+	mux.Handle("GET /api/reports/summary", http.HandlerFunc(HandleReportSummary))
 	return mux
 }
 
@@ -162,7 +163,11 @@ func TestTransactionHandlers(t *testing.T) {
 
 		exceeded := performJSONRequest(t, router, http.MethodPost, "/api/transactions", `{"amount":200,"category":"еда","date":"2025-09-11"}`)
 		requireErrorResponse(t, exceeded, http.StatusConflict, "budget exceeded")
-		if got := len(ledger.ListTransactions()); got != 1 {
+		transactions, err := ledger.ListTransactions()
+		if err != nil {
+			t.Fatalf("ListTransactions() returned an error: %v", err)
+		}
+		if got := len(transactions); got != 1 {
 			t.Fatalf("transaction count after rejected request = %d, want 1", got)
 		}
 	})

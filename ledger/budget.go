@@ -72,6 +72,13 @@ func ListBudgets() ([]Budget, error) {
 		return result, nil
 	}
 
+	ctx := context.Background()
+	if cached, found, err := readBudgetsCache(ctx); err != nil {
+		return nil, err
+	} else if found {
+		return cached, nil
+	}
+
 	rows, err := DB.Query(`SELECT category, limit_amount FROM budgets ORDER BY category`)
 	if err != nil {
 		return nil, fmt.Errorf("list budgets: %w", err)
@@ -88,6 +95,9 @@ func ListBudgets() ([]Budget, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate budgets: %w", err)
+	}
+	if err := writeBudgetsCache(ctx, result); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

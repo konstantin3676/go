@@ -77,6 +77,41 @@ func writeReportCache(ctx context.Context, key string, report []ReportSummary) e
 	return nil
 }
 
+func readBudgetsCache(ctx context.Context) ([]Budget, bool, error) {
+	if redisClient == nil {
+		return nil, false, nil
+	}
+
+	encoded, err := redisClient.Get(ctx, "budgets:all").Result()
+	if err == redis.Nil {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read budgets cache: %w", err)
+	}
+
+	var cached []Budget
+	if err := json.Unmarshal([]byte(encoded), &cached); err != nil {
+		return nil, false, fmt.Errorf("decode budgets cache: %w", err)
+	}
+	return cached, true, nil
+}
+
+func writeBudgetsCache(ctx context.Context, budgets []Budget) error {
+	if redisClient == nil {
+		return nil
+	}
+
+	data, err := json.Marshal(budgets)
+	if err != nil {
+		return fmt.Errorf("encode budgets cache: %w", err)
+	}
+	if err := redisClient.Set(ctx, "budgets:all", data, 20*time.Second).Err(); err != nil {
+		return fmt.Errorf("write budgets cache: %w", err)
+	}
+	return nil
+}
+
 func invalidateBudgetsCache(ctx context.Context) error {
 	if redisClient == nil {
 		return nil

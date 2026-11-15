@@ -2,9 +2,7 @@ package ledger
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -42,82 +40,4 @@ func CloseRedis() error {
 	err := redisClient.Close()
 	redisClient = nil
 	return err
-}
-
-func readReportCache(ctx context.Context, key string) ([]ReportSummary, bool, error) {
-	if redisClient == nil {
-		return nil, false, nil
-	}
-
-	encoded, err := redisClient.Get(ctx, key).Result()
-	if err == nil {
-		var cached []ReportSummary
-		if err := json.Unmarshal([]byte(encoded), &cached); err != nil {
-			return nil, false, fmt.Errorf("decode report cache: %w", err)
-		}
-		return cached, true, nil
-	}
-	if err != redis.Nil {
-		return nil, false, fmt.Errorf("read report cache: %w", err)
-	}
-	return nil, false, nil
-}
-
-func writeReportCache(ctx context.Context, key string, report []ReportSummary) error {
-	if redisClient == nil {
-		return nil
-	}
-	data, err := json.Marshal(report)
-	if err != nil {
-		return fmt.Errorf("encode report cache: %w", err)
-	}
-	if err := redisClient.Set(ctx, key, data, 30*time.Second).Err(); err != nil {
-		return fmt.Errorf("write report cache: %w", err)
-	}
-	return nil
-}
-
-func readBudgetsCache(ctx context.Context) ([]Budget, bool, error) {
-	if redisClient == nil {
-		return nil, false, nil
-	}
-
-	encoded, err := redisClient.Get(ctx, "budgets:all").Result()
-	if err == redis.Nil {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("read budgets cache: %w", err)
-	}
-
-	var cached []Budget
-	if err := json.Unmarshal([]byte(encoded), &cached); err != nil {
-		return nil, false, fmt.Errorf("decode budgets cache: %w", err)
-	}
-	return cached, true, nil
-}
-
-func writeBudgetsCache(ctx context.Context, budgets []Budget) error {
-	if redisClient == nil {
-		return nil
-	}
-
-	data, err := json.Marshal(budgets)
-	if err != nil {
-		return fmt.Errorf("encode budgets cache: %w", err)
-	}
-	if err := redisClient.Set(ctx, "budgets:all", data, 20*time.Second).Err(); err != nil {
-		return fmt.Errorf("write budgets cache: %w", err)
-	}
-	return nil
-}
-
-func invalidateBudgetsCache(ctx context.Context) error {
-	if redisClient == nil {
-		return nil
-	}
-	if err := redisClient.Del(ctx, "budgets:all").Err(); err != nil {
-		return fmt.Errorf("invalidate budgets cache: %w", err)
-	}
-	return nil
 }

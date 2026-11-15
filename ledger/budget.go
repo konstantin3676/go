@@ -7,6 +7,9 @@ import (
 	"io"
 	"sort"
 	"sync"
+
+	"ledger/internal/repository/cached"
+	"ledger/internal/repository/pg"
 )
 
 var (
@@ -26,18 +29,8 @@ func SetBudget(b Budget) error {
 		return nil
 	}
 
-	_, err := DB.ExecContext(context.Background(), `
-		INSERT INTO budgets(category, limit_amount)
-		VALUES ($1, $2)
-		ON CONFLICT (category)
-		DO UPDATE SET limit_amount = EXCLUDED.limit_amount`, b.Category, b.Limit)
-	if err != nil {
-		return fmt.Errorf("upsert budget: %w", err)
-	}
-	if err := invalidateBudgetsCache(context.Background()); err != nil {
-		return err
-	}
-	return nil
+	repo := cached.NewBudgetRepository(pg.NewBudgetRepository(DB), redisClient)
+	return repo.Upsert(context.Background(), b)
 }
 
 func ListBudgets() ([]Budget, error) {
@@ -54,34 +47,8 @@ func ListBudgets() ([]Budget, error) {
 		return result, nil
 	}
 
-	ctx := context.Background()
-	if cached, found, err := readBudgetsCache(ctx); err != nil {
-		return nil, err
-	} else if found {
-		return cached, nil
-	}
-
-	rows, err := DB.Query(`SELECT category, limit_amount FROM budgets ORDER BY category`)
-	if err != nil {
-		return nil, fmt.Errorf("list budgets: %w", err)
-	}
-	defer rows.Close()
-
-	result := make([]Budget, 0)
-	for rows.Next() {
-		var budget Budget
-		if err := rows.Scan(&budget.Category, &budget.Limit); err != nil {
-			return nil, fmt.Errorf("scan budget: %w", err)
-		}
-		result = append(result, budget)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate budgets: %w", err)
-	}
-	if err := writeBudgetsCache(ctx, result); err != nil {
-		return nil, err
-	}
-	return result, nil
+	repo := cached.NewBudgetRepository(pg.NewBudgetRepository(DB), redisClient)
+	return repo.List(context.Background())
 }
 
 func LoadBudgets(r io.Reader) error {

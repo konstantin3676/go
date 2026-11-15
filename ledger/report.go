@@ -6,11 +6,6 @@ import (
 	"time"
 )
 
-type ReportSummary struct {
-	Category string  `json:"category"`
-	Amount   float64 `json:"amount"`
-}
-
 func GetReportSummary(ctx context.Context, from, to string) ([]ReportSummary, error) {
 	if _, err := time.Parse("2006-01-02", from); err != nil {
 		return nil, fmt.Errorf("invalid from date: %w", err)

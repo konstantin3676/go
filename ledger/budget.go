@@ -3,29 +3,11 @@ package ledger
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"sync"
 )
-
-var ErrBudgetExceeded = errors.New("budget exceeded")
-
-type Budget struct {
-	Category string  `json:"category"`
-	Limit    float64 `json:"limit"`
-}
-
-func (b Budget) Validate() error {
-	if b.Limit <= 0 {
-		return errors.New("budget limit must be positive")
-	}
-	if b.Category == "" {
-		return errors.New("budget category must not be empty")
-	}
-	return nil
-}
 
 var (
 	budgets = map[string]Budget{}

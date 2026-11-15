@@ -1,10 +1,7 @@
 package ledger
 
-import "fmt"
+import "ledger/internal/service"
 
 func CheckValid(v Validatable) error {
-	if err := v.Validate(); err != nil {
-		return fmt.Errorf("validation failed: %w", err)
-	}
-	return nil
+	return service.CheckValid(v)
 }

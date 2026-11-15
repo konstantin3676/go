@@ -17,3 +17,10 @@ type TransactionRepository interface {
 type ReportRepository interface {
 	Summary(ctx context.Context, from, to string) ([]ReportSummary, error)
 }
+
+// ReportDataRepository provides independent queries for the report calculator.
+// Both dates are inclusive and use the YYYY-MM-DD format.
+type ReportDataRepository interface {
+	Categories(ctx context.Context, from, to string) ([]string, error)
+	SumByCategory(ctx context.Context, category, from, to string) (float64, error)
+}

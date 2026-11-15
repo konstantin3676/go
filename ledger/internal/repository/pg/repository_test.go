@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"ledger/internal/domain"
 
@@ -123,15 +124,66 @@ func TestTransactionSumByCategory(t *testing.T) {
 	}
 }
 
-func TestReportSummary(t *testing.T) {
+func TestReportCategories(t *testing.T) {
 	db, mock := mockDB(t)
-	mock.ExpectQuery(`SELECT category, COALESCE\(SUM\(amount\), 0\) FROM expenses WHERE date BETWEEN \$1 AND \$2 GROUP BY category ORDER BY category`).
+	mock.ExpectQuery(`SELECT DISTINCT category FROM expenses WHERE date BETWEEN \$1 AND \$2 ORDER BY category`).
 		WithArgs("2025-09-01", "2025-09-30").
-		WillReturnRows(sqlmock.NewRows([]string{"category", "amount"}).AddRow("еда", 250))
-	got, err := NewReportRepository(db).Summary(t.Context(), "2025-09-01", "2025-09-30")
-	want := []domain.ReportSummary{{Category: "еда", Amount: 250}}
+		WillReturnRows(sqlmock.NewRows([]string{"category"}).AddRow("еда"))
+	got, err := NewReportRepository(db).Categories(t.Context(), "2025-09-01", "2025-09-30")
+	want := []string{"еда"}
 	if err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("Summary() = %+v, %v; want %+v", got, err, want)
+		t.Fatalf("Categories() = %+v, %v; want %+v", got, err, want)
+	}
+}
+
+func TestReportSumByCategory(t *testing.T) {
+	db, mock := mockDB(t)
+	mock.ExpectQuery(`SELECT COALESCE\(SUM\(amount\), 0\) FROM expenses WHERE category = \$1 AND date BETWEEN \$2 AND \$3`).
+		WithArgs("еда", "2025-09-01", "2025-09-30").
+		WillReturnRows(sqlmock.NewRows([]string{"amount"}).AddRow(250.5))
+	got, err := NewReportRepository(db).SumByCategory(t.Context(), "еда", "2025-09-01", "2025-09-30")
+	if err != nil || got != 250.5 {
+		t.Fatalf("SumByCategory() = %v, %v", got, err)
+	}
+}
+
+func TestReportQueriesStopOnDeadline(t *testing.T) {
+	for _, categories := range []bool{true, false} {
+		t.Run(map[bool]string{true: "categories", false: "sum"}[categories], func(t *testing.T) {
+			db, mock := mockDB(t)
+			mock.ExpectQuery("SELECT").WillDelayFor(time.Second).
+				WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(0))
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+			defer cancel()
+			start := time.Now()
+			var err error
+			if categories {
+				_, err = NewReportRepository(db).Categories(ctx, "2025-09-01", "2025-09-30")
+			} else {
+				_, err = NewReportRepository(db).SumByCategory(ctx, "еда", "2025-09-01", "2025-09-30")
+			}
+			if err == nil || ctx.Err() != context.DeadlineExceeded || time.Since(start) >= time.Second {
+				t.Fatalf("query did not stop on deadline: %v", err)
+			}
+		})
+	}
+}
+
+func TestReportCategoryRowErrors(t *testing.T) {
+	for _, scanError := range []bool{true, false} {
+		t.Run(map[bool]string{true: "scan", false: "iteration"}[scanError], func(t *testing.T) {
+			db, mock := mockDB(t)
+			rows := sqlmock.NewRows([]string{"category"})
+			if scanError {
+				rows.AddRow(nil)
+			} else {
+				rows.AddRow("еда").RowError(0, errors.New("read failed"))
+			}
+			mock.ExpectQuery("SELECT").WillReturnRows(rows).RowsWillBeClosed()
+			if _, err := NewReportRepository(db).Categories(t.Context(), "2025-09-01", "2025-09-30"); err == nil {
+				t.Fatal("expected row error")
+			}
+		})
 	}
 }
 
@@ -158,7 +210,11 @@ func TestRepositoryErrors(t *testing.T) {
 			return err
 		}, false},
 		{"report", func(db *sql.DB) error {
-			_, err := NewReportRepository(db).Summary(t.Context(), "2025-09-01", "2025-09-30")
+			_, err := NewReportRepository(db).Categories(t.Context(), "2025-09-01", "2025-09-30")
+			return err
+		}, false},
+		{"report sum", func(db *sql.DB) error {
+			_, err := NewReportRepository(db).SumByCategory(t.Context(), "еда", "2025-09-01", "2025-09-30")
 			return err
 		}, false},
 	}
@@ -205,7 +261,10 @@ func TestRepositoriesRespectCanceledContext(t *testing.T) {
 	if _, err := NewTransactionRepository(db).List(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("List() error = %v, want context.Canceled", err)
 	}
-	if _, err := NewReportRepository(db).Summary(ctx, "2025-09-01", "2025-09-30"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Summary() error = %v, want context.Canceled", err)
+	if _, err := NewReportRepository(db).Categories(ctx, "2025-09-01", "2025-09-30"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Categories() error = %v, want context.Canceled", err)
+	}
+	if _, err := NewReportRepository(db).SumByCategory(ctx, "еда", "2025-09-01", "2025-09-30"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("SumByCategory() error = %v, want context.Canceled", err)
 	}
 }

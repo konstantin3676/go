@@ -80,7 +80,8 @@ func TestFactoryBuildsWorkingService(t *testing.T) {
 	if !server.DB(2).Exists("budgets:all") || server.DB(0).Exists("budgets:all") {
 		t.Fatal("budget cache must use the configured Redis database")
 	}
-	mock.ExpectQuery("SELECT category, COALESCE").WithArgs("2025-09-01", "2025-09-30").WillReturnRows(sqlmock.NewRows([]string{"category", "amount"}).AddRow("еда", 500))
+	mock.ExpectQuery("SELECT DISTINCT category").WithArgs("2025-09-01", "2025-09-30").WillReturnRows(sqlmock.NewRows([]string{"category"}).AddRow("еда"))
+	mock.ExpectQuery("SELECT COALESCE").WithArgs("еда", "2025-09-01", "2025-09-30").WillReturnRows(sqlmock.NewRows([]string{"amount"}).AddRow(500))
 	for range 2 {
 		report, err := svc.GetReportSummary(t.Context(), "2025-09-01", "2025-09-30")
 		if err != nil || len(report) != 1 || report[0].Amount != 500 {

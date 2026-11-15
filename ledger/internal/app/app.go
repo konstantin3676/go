@@ -34,9 +34,10 @@ func newWithConfig(ctx context.Context, cfg config, openDB func(string, string) 
 	}
 
 	client := redis.NewClient(&redis.Options{
-		Addr:     cfg.redisAddr,
-		Password: cfg.redisPassword,
-		DB:       cfg.redisDB,
+		ContextTimeoutEnabled: true,
+		Addr:                  cfg.redisAddr,
+		Password:              cfg.redisPassword,
+		DB:                    cfg.redisDB,
 	})
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
@@ -47,7 +48,7 @@ func newWithConfig(ctx context.Context, cfg config, openDB func(string, string) 
 	svc := service.New(
 		cached.NewBudgetRepository(pg.NewBudgetRepository(db), client),
 		pg.NewTransactionRepository(db),
-		cached.NewReportRepository(pg.NewReportRepository(db), client),
+		cached.NewReportRepository(service.NewReportCalculator(pg.NewReportRepository(db)), client),
 	)
 	var once sync.Once
 	var closeErr error

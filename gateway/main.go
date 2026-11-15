@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -23,6 +24,10 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	timeout, err := requestTimeout()
+	if err != nil {
+		return err
+	}
 	startupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	svc, closeFn, err := ledger.New(startupCtx)
 	cancel()
@@ -33,7 +38,7 @@ func run(ctx context.Context) error {
 
 	server := &http.Server{
 		Addr:    ":8080",
-		Handler: api.LoggingMiddleware(api.NewHandler(svc).Routes()),
+		Handler: api.LoggingMiddleware(api.TimeoutMiddleware(timeout, api.NewHandler(svc).Routes())),
 	}
 	serverErr := make(chan error, 1)
 	log.Println("Gateway service started on :8080")
@@ -53,4 +58,16 @@ func run(ctx context.Context) error {
 		}
 		return nil
 	}
+}
+
+func requestTimeout() (time.Duration, error) {
+	value := os.Getenv("REQUEST_TIMEOUT")
+	if value == "" {
+		return api.DefaultRequestTimeout, nil
+	}
+	timeout, err := time.ParseDuration(value)
+	if err != nil || timeout <= 0 {
+		return 0, fmt.Errorf("REQUEST_TIMEOUT must be a positive duration (for example 2s or 50ms)")
+	}
+	return timeout, nil
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -45,7 +46,7 @@ func (h *Handler) HandleCreateTransaction(w http.ResponseWriter, r *http.Request
 func (h *Handler) HandleListTransactions(w http.ResponseWriter, r *http.Request) {
 	transactions, err := h.service.ListTransactions(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServiceError(w, err)
 		return
 	}
 
@@ -77,7 +78,7 @@ func (h *Handler) HandleCreateBudget(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleListBudgets(w http.ResponseWriter, r *http.Request) {
 	budgets, err := h.service.ListBudgets(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServiceError(w, err)
 		return
 	}
 
@@ -103,7 +104,7 @@ func (h *Handler) HandleReportSummary(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "from and to must be valid dates with from <= to")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServiceError(w, err)
 		return
 	}
 
@@ -113,6 +114,8 @@ func (h *Handler) HandleReportSummary(w http.ResponseWriter, r *http.Request) {
 func writeServiceError(w http.ResponseWriter, err error) {
 	var validationErr *ledger.ValidationError
 	switch {
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		writeError(w, http.StatusGatewayTimeout, timeoutMessage)
 	case errors.As(err, &validationErr):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ledger.ErrBudgetExceeded):

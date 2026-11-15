@@ -16,7 +16,6 @@ type reportCalculator struct {
 
 var _ domain.ReportRepository = (*reportCalculator)(nil)
 
-// NewReportCalculator builds the concurrent computation behind the report cache.
 func NewReportCalculator(source domain.ReportDataRepository) domain.ReportRepository {
 	return &reportCalculator{source: source}
 }
@@ -38,7 +37,6 @@ func (c *reportCalculator) Summary(ctx context.Context, from, to string) ([]doma
 		return nil, err
 	}
 
-	// Each worker owns one slice element. Only read results after Wait.
 	results := make([]domain.ReportSummary, len(categories))
 	var wg sync.WaitGroup
 	for i, category := range categories {
@@ -69,8 +67,6 @@ func (c *reportCalculator) Summary(ctx context.Context, from, to string) ([]doma
 	return results, nil
 }
 
-// The returned function joins the heartbeat goroutine, so no heartbeat outlives
-// its calculation. The ticker is owned and stopped by that goroutine.
 func startReportHeartbeat(ctx context.Context, interval time.Duration, logger *log.Logger) func() {
 	done := make(chan struct{})
 	stopped := make(chan struct{})

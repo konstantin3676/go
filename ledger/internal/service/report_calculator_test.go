@@ -52,7 +52,6 @@ func TestReportCalculatorRunsCategoriesConcurrently(t *testing.T) {
 				t.Error("sum period not forwarded")
 			}
 			started <- struct{}{}
-			// A sequential implementation cannot pass this barrier.
 			select {
 			case <-allStarted:
 				return map[string]float64{"еда": 250.5, "транспорт": 100, "книги": 75}[category], nil

@@ -41,7 +41,7 @@ func TestReportHeartbeatLifecycle(t *testing.T) {
 			if canceled {
 				cancel()
 			}
-			stop() // Waits for ticker cleanup, final log and goroutine exit.
+			stop()
 			want := "calculation finished"
 			if canceled {
 				want = "calculation interrupted (ctx.Done): context canceled"

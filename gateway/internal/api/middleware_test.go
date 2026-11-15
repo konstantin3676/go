@@ -61,7 +61,6 @@ func TestTimeoutAppliesToAllAPIRoutes(t *testing.T) {
 		{"GET", "/api/reports/summary?from=2025-09-01&to=2025-09-30", ""},
 	} {
 		t.Run(route.method+route.path, func(t *testing.T) {
-			// An already expired deadline must stop every route before its service call.
 			handler := TimeoutMiddleware(-time.Second, NewHandler(&serviceStub{}).Routes())
 			response := performJSONRequest(t, handler, route.method, route.path, route.body)
 			requireErrorResponse(t, response, http.StatusGatewayTimeout, timeoutMessage)

@@ -4,40 +4,46 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
 
 	"ledger"
 )
 
-func HandleCreateTransaction(w http.ResponseWriter, r *http.Request) {
+type Handler struct {
+	service ledger.Service
+}
+
+func NewHandler(service ledger.Service) *Handler {
+	return &Handler{service: service}
+}
+
+func (h *Handler) Routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/transactions", h.HandleCreateTransaction)
+	mux.HandleFunc("GET /api/transactions", h.HandleListTransactions)
+	mux.HandleFunc("POST /api/budgets", h.HandleCreateBudget)
+	mux.HandleFunc("GET /api/budgets", h.HandleListBudgets)
+	mux.HandleFunc("GET /api/reports/summary", h.HandleReportSummary)
+	return mux
+}
+
+func (h *Handler) HandleCreateTransaction(w http.ResponseWriter, r *http.Request) {
 	var req CreateTransactionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	tx := req.ToDomain()
-
-	if err := tx.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	created, err := ledger.AddTransactionAndReturn(tx)
+	created, err := h.service.AddTransaction(r.Context(), req.ToDomain())
 	if err != nil {
-		if errors.Is(err, ledger.ErrBudgetExceeded) {
-			writeError(w, http.StatusConflict, "budget exceeded")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServiceError(w, err)
 		return
 	}
 
 	writeJSON(w, http.StatusCreated, NewTransactionResponse(created))
 }
 
-func HandleListTransactions(w http.ResponseWriter, r *http.Request) {
-	transactions, err := ledger.ListTransactions()
+func (h *Handler) HandleListTransactions(w http.ResponseWriter, r *http.Request) {
+	transactions, err := h.service.ListTransactions(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -51,7 +57,7 @@ func HandleListTransactions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func HandleCreateBudget(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HandleCreateBudget(w http.ResponseWriter, r *http.Request) {
 	var req CreateBudgetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -60,21 +66,16 @@ func HandleCreateBudget(w http.ResponseWriter, r *http.Request) {
 
 	budget := req.ToDomain()
 
-	if err := budget.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err := ledger.SetBudget(budget); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if err := h.service.SetBudget(r.Context(), budget); err != nil {
+		writeServiceError(w, err)
 		return
 	}
 
 	writeJSON(w, http.StatusCreated, NewBudgetResponse(budget))
 }
 
-func HandleListBudgets(w http.ResponseWriter, r *http.Request) {
-	budgets, err := ledger.ListBudgets()
+func (h *Handler) HandleListBudgets(w http.ResponseWriter, r *http.Request) {
+	budgets, err := h.service.ListBudgets(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -88,25 +89,35 @@ func HandleListBudgets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func HandleReportSummary(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HandleReportSummary(w http.ResponseWriter, r *http.Request) {
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
 	if from == "" || to == "" {
 		writeError(w, http.StatusBadRequest, "from and to query parameters are required")
 		return
 	}
-	fromDate, fromErr := time.Parse("2006-01-02", from)
-	toDate, toErr := time.Parse("2006-01-02", to)
-	if fromErr != nil || toErr != nil || fromDate.After(toDate) {
-		writeError(w, http.StatusBadRequest, "from and to must be valid dates with from <= to")
-		return
-	}
-
-	report, err := ledger.GetReportSummary(r.Context(), from, to)
+	report, err := h.service.GetReportSummary(r.Context(), from, to)
 	if err != nil {
+		var validationErr *ledger.ValidationError
+		if errors.As(err, &validationErr) {
+			writeError(w, http.StatusBadRequest, "from and to must be valid dates with from <= to")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, report)
+}
+
+func writeServiceError(w http.ResponseWriter, err error) {
+	var validationErr *ledger.ValidationError
+	switch {
+	case errors.As(err, &validationErr):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ledger.ErrBudgetExceeded):
+		writeError(w, http.StatusConflict, "budget exceeded")
+	default:
+		writeError(w, http.StatusInternalServerError, err.Error())
+	}
 }

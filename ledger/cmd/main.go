@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"ledger"
 )
@@ -12,20 +14,24 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	if _, err := ledger.InitDB(ctx); err != nil {
-		log.Fatalf("could not connect to PostgreSQL: %v", err)
+	if err := run(ctx); err != nil {
+		log.Fatal(err)
 	}
-	defer ledger.CloseDB()
+}
+
+func run(ctx context.Context) error {
+	startupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	_, closeFn, err := ledger.New(startupCtx)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("initialize Ledger: %w", err)
+	}
+	defer closeFn()
 	log.Println("Ledger connected to PostgreSQL")
-
-	if _, err := ledger.InitRedis(ctx); err != nil {
-		log.Fatalf("could not connect to Redis: %v", err)
-	}
-	defer ledger.CloseRedis()
 	log.Println("Ledger connected to Redis")
 
 	log.Println("Ledger service started")
 	<-ctx.Done()
 	log.Println("Ledger service stopped")
+	return nil
 }

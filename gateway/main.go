@@ -2,34 +2,55 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"gateway/internal/api"
 	"ledger"
 )
 
 func main() {
-	if _, err := ledger.InitDB(context.Background()); err != nil {
-		log.Fatalf("could not connect to PostgreSQL: %v", err)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx); err != nil {
+		log.Fatal(err)
 	}
-	defer ledger.CloseDB()
+}
 
-	if _, err := ledger.InitRedis(context.Background()); err != nil {
-		log.Fatalf("could not connect to Redis: %v", err)
+func run(ctx context.Context) error {
+	startupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	svc, closeFn, err := ledger.New(startupCtx)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("initialize Ledger: %w", err)
 	}
-	defer ledger.CloseRedis()
+	defer closeFn()
 
-	mux := http.NewServeMux()
-
-	mux.Handle("POST /api/transactions", http.HandlerFunc(api.HandleCreateTransaction))
-	mux.Handle("GET /api/transactions", http.HandlerFunc(api.HandleListTransactions))
-	mux.Handle("POST /api/budgets", http.HandlerFunc(api.HandleCreateBudget))
-	mux.Handle("GET /api/budgets", http.HandlerFunc(api.HandleListBudgets))
-	mux.Handle("GET /api/reports/summary", http.HandlerFunc(api.HandleReportSummary))
-
-	handler := api.LoggingMiddleware(mux)
-
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: api.LoggingMiddleware(api.NewHandler(svc).Routes()),
+	}
+	serverErr := make(chan error, 1)
 	log.Println("Gateway service started on :8080")
-	log.Fatal(http.ListenAndServe(":8080", handler))
+	go func() { serverErr <- server.ListenAndServe() }()
+	select {
+	case err := <-serverErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("serve HTTP: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+			return fmt.Errorf("shutdown HTTP: %w", err)
+		}
+		return nil
+	}
 }

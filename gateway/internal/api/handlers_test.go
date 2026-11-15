@@ -1,28 +1,57 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	"ledger"
 )
 
-func testRouter() http.Handler {
-	mux := http.NewServeMux()
-	mux.Handle("POST /api/transactions", http.HandlerFunc(HandleCreateTransaction))
-	mux.Handle("GET /api/transactions", http.HandlerFunc(HandleListTransactions))
-	mux.Handle("POST /api/budgets", http.HandlerFunc(HandleCreateBudget))
-	mux.Handle("GET /api/budgets", http.HandlerFunc(HandleListBudgets))
-	mux.Handle("GET /api/reports/summary", http.HandlerFunc(HandleReportSummary))
-	return mux
+type serviceStub struct {
+	setBudget        func(context.Context, ledger.Budget) error
+	listBudgets      func(context.Context) ([]ledger.Budget, error)
+	addTransaction   func(context.Context, ledger.Transaction) (ledger.Transaction, error)
+	listTransactions func(context.Context) ([]ledger.Transaction, error)
+	report           func(context.Context, string, string) ([]ledger.ReportSummary, error)
+}
+
+var _ ledger.Service = (*serviceStub)(nil)
+
+func (s *serviceStub) SetBudget(ctx context.Context, budget ledger.Budget) error {
+	return s.setBudget(ctx, budget)
+}
+
+func (s *serviceStub) ListBudgets(ctx context.Context) ([]ledger.Budget, error) {
+	return s.listBudgets(ctx)
+}
+
+func (s *serviceStub) AddTransaction(ctx context.Context, tx ledger.Transaction) (ledger.Transaction, error) {
+	return s.addTransaction(ctx, tx)
+}
+
+func (s *serviceStub) ListTransactions(ctx context.Context) ([]ledger.Transaction, error) {
+	return s.listTransactions(ctx)
+}
+
+func (s *serviceStub) GetReportSummary(ctx context.Context, from, to string) ([]ledger.ReportSummary, error) {
+	return s.report(ctx, from, to)
+}
+
+func (s *serviceStub) LoadBudgets(context.Context, io.Reader) error {
+	panic("LoadBudgets must not be called by HTTP handlers")
 }
 
 func performJSONRequest(t *testing.T, handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := httptest.NewRequest(method, path, strings.NewReader(body)).WithContext(t.Context())
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
@@ -43,140 +72,187 @@ func requireErrorResponse(t *testing.T, response *httptest.ResponseRecorder, sta
 		t.Fatalf("status = %d, want %d; body = %s", response.Code, status, response.Body.String())
 	}
 	requireJSONContentType(t, response)
-
 	var body map[string]string
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("decode error response: %v", err)
 	}
-	if body["error"] != message {
-		t.Fatalf("error = %q, want %q", body["error"], message)
+	if len(body) != 1 || body["error"] != message {
+		t.Fatalf("error body = %v, want error %q", body, message)
 	}
 }
 
 func TestBudgetHandlers(t *testing.T) {
-	router := testRouter()
-
-	t.Run("create and list", func(t *testing.T) {
-		ledger.Reset()
-		t.Cleanup(ledger.Reset)
-
-		create := performJSONRequest(t, router, http.MethodPost, "/api/budgets", `{"category":"еда","limit":5000}`)
-		if create.Code != http.StatusCreated {
-			t.Fatalf("POST /api/budgets status = %d, want %d", create.Code, http.StatusCreated)
-		}
-		requireJSONContentType(t, create)
-
-		var created BudgetResponse
-		if err := json.NewDecoder(create.Body).Decode(&created); err != nil {
-			t.Fatalf("decode created budget: %v", err)
-		}
-		if created.Category != "еда" || created.Limit != 5000 {
-			t.Fatalf("created budget = %+v, want category еда and limit 5000", created)
-		}
-
-		list := performJSONRequest(t, router, http.MethodGet, "/api/budgets", "")
-		if list.Code != http.StatusOK {
-			t.Fatalf("GET /api/budgets status = %d, want %d", list.Code, http.StatusOK)
-		}
-		requireJSONContentType(t, list)
-
-		var budgets []BudgetResponse
-		if err := json.NewDecoder(list.Body).Decode(&budgets); err != nil {
-			t.Fatalf("decode budget list: %v", err)
-		}
-		if len(budgets) != 1 || budgets[0].Category != "еда" || budgets[0].Limit != 5000 {
-			t.Fatalf("budget list = %+v, want one budget for еда with limit 5000", budgets)
-		}
-	})
-
-	t.Run("bad_json", func(t *testing.T) {
-		ledger.Reset()
-		t.Cleanup(ledger.Reset)
-
-		response := performJSONRequest(t, router, http.MethodPost, "/api/budgets", `{"category":`)
-		requireErrorResponse(t, response, http.StatusBadRequest, "invalid request body")
-	})
-
-	t.Run("non-positive limit", func(t *testing.T) {
-		ledger.Reset()
-		t.Cleanup(ledger.Reset)
-
-		response := performJSONRequest(t, router, http.MethodPost, "/api/budgets", `{"category":"еда","limit":0}`)
-		requireErrorResponse(t, response, http.StatusBadRequest, "budget limit must be positive")
-	})
+	var saved ledger.Budget
+	setCalls, listCalls := 0, 0
+	svc := &serviceStub{
+		setBudget: func(ctx context.Context, budget ledger.Budget) error {
+			setCalls++
+			if ctx != t.Context() || budget != (ledger.Budget{Category: "еда", Limit: 5000}) {
+				t.Fatalf("SetBudget arguments = %+v; context forwarded = %v", budget, ctx == t.Context())
+			}
+			saved = budget
+			return nil
+		},
+		listBudgets: func(ctx context.Context) ([]ledger.Budget, error) {
+			listCalls++
+			if ctx != t.Context() {
+				t.Fatal("request context was not forwarded")
+			}
+			return []ledger.Budget{saved}, nil
+		},
+	}
+	router := NewHandler(svc).Routes()
+	created := performJSONRequest(t, router, http.MethodPost, "/api/budgets", `{"category":"еда","limit":5000}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status = %d; body = %s", created.Code, created.Body.String())
+	}
+	requireJSONContentType(t, created)
+	var budget BudgetResponse
+	if err := json.NewDecoder(created.Body).Decode(&budget); err != nil || budget != (BudgetResponse{Category: "еда", Limit: 5000}) {
+		t.Fatalf("created budget = %+v, %v", budget, err)
+	}
+	listed := performJSONRequest(t, router, http.MethodGet, "/api/budgets", "")
+	requireJSONContentType(t, listed)
+	var budgets []BudgetResponse
+	if err := json.NewDecoder(listed.Body).Decode(&budgets); err != nil || listed.Code != http.StatusOK || !reflect.DeepEqual(budgets, []BudgetResponse{budget}) {
+		t.Fatalf("budget list = %+v, %v; status = %d", budgets, err, listed.Code)
+	}
+	if setCalls != 1 || listCalls != 1 {
+		t.Fatalf("service calls: set = %d, list = %d", setCalls, listCalls)
+	}
 }
 
 func TestTransactionHandlers(t *testing.T) {
-	router := testRouter()
+	want := ledger.Transaction{Amount: 450, Category: "еда", Description: "ланч", Date: "2025-09-10"}
+	var saved ledger.Transaction
+	addCalls, listCalls := 0, 0
+	svc := &serviceStub{
+		addTransaction: func(ctx context.Context, tx ledger.Transaction) (ledger.Transaction, error) {
+			addCalls++
+			if ctx != t.Context() || tx != want {
+				t.Fatalf("AddTransaction arguments = %+v; context forwarded = %v", tx, ctx == t.Context())
+			}
+			tx.ID = 42
+			saved = tx
+			return tx, nil
+		},
+		listTransactions: func(ctx context.Context) ([]ledger.Transaction, error) {
+			listCalls++
+			if ctx != t.Context() {
+				t.Fatal("request context was not forwarded")
+			}
+			return []ledger.Transaction{saved}, nil
+		},
+	}
+	router := NewHandler(svc).Routes()
+	created := performJSONRequest(t, router, http.MethodPost, "/api/transactions", `{"amount":450,"category":"еда","description":"ланч","date":"2025-09-10"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status = %d; body = %s", created.Code, created.Body.String())
+	}
+	requireJSONContentType(t, created)
+	var tx TransactionResponse
+	if err := json.NewDecoder(created.Body).Decode(&tx); err != nil || tx != NewTransactionResponse(saved) {
+		t.Fatalf("created transaction = %+v, %v", tx, err)
+	}
+	listed := performJSONRequest(t, router, http.MethodGet, "/api/transactions", "")
+	requireJSONContentType(t, listed)
+	var transactions []TransactionResponse
+	if err := json.NewDecoder(listed.Body).Decode(&transactions); err != nil || listed.Code != http.StatusOK || !reflect.DeepEqual(transactions, []TransactionResponse{tx}) {
+		t.Fatalf("transaction list = %+v, %v; status = %d", transactions, err, listed.Code)
+	}
+	if addCalls != 1 || listCalls != 1 {
+		t.Fatalf("service calls: add = %d, list = %d", addCalls, listCalls)
+	}
+}
 
-	t.Run("ok", func(t *testing.T) {
-		ledger.Reset()
-		t.Cleanup(ledger.Reset)
+func TestMalformedRequestsDoNotCallService(t *testing.T) {
+	for _, path := range []string{"/api/budgets", "/api/transactions"} {
+		t.Run(path, func(t *testing.T) {
+			response := performJSONRequest(t, NewHandler(&serviceStub{}).Routes(), http.MethodPost, path, `{"category":`)
+			requireErrorResponse(t, response, http.StatusBadRequest, "invalid request body")
+		})
+	}
+}
 
-		budget := performJSONRequest(t, router, http.MethodPost, "/api/budgets", `{"category":"еда","limit":5000}`)
-		if budget.Code != http.StatusCreated {
-			t.Fatalf("creating budget status = %d, want %d", budget.Code, http.StatusCreated)
-		}
+func TestServiceErrorResponses(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, path, body string
+		serviceErr               error
+		status                   int
+		message                  string
+	}{
+		{"invalid budget", "POST", "/api/budgets", `{"category":"еда","limit":0}`, &ledger.ValidationError{Err: errors.New("budget limit must be positive")}, 400, "budget limit must be positive"},
+		{"invalid transaction", "POST", "/api/transactions", `{"amount":-100}`, &ledger.ValidationError{Err: errors.New("transaction amount must be positive")}, 400, "transaction amount must be positive"},
+		{"budget exceeded", "POST", "/api/transactions", `{"amount":600,"category":"еда"}`, fmt.Errorf("%w for category %q", ledger.ErrBudgetExceeded, "еда"), 409, "budget exceeded"},
+		{"budget write failed", "POST", "/api/budgets", `{"category":"еда","limit":500}`, errors.New("upsert budget: unavailable"), 500, "upsert budget: unavailable"},
+		{"transaction write failed", "POST", "/api/transactions", `{"amount":100,"category":"еда"}`, errors.New("insert transaction: unavailable"), 500, "insert transaction: unavailable"},
+		{"budget list failed", "GET", "/api/budgets", "", errors.New("list budgets: unavailable"), 500, "list budgets: unavailable"},
+		{"transaction list failed", "GET", "/api/transactions", "", errors.New("list transactions: unavailable"), 500, "list transactions: unavailable"},
+		{"invalid report date", "GET", "/api/reports/summary?from=bad&to=2025-09-30", "", &ledger.ValidationError{Err: errors.New("invalid from date: bad")}, 400, "from and to must be valid dates with from <= to"},
+		{"invalid report range", "GET", "/api/reports/summary?from=2025-09-30&to=2025-09-01", "", &ledger.ValidationError{Err: errors.New("from and to must be valid dates with from <= to")}, 400, "from and to must be valid dates with from <= to"},
+		{"report failed", "GET", "/api/reports/summary?from=2025-09-01&to=2025-09-30", "", errors.New("query report summary: unavailable"), 500, "query report summary: unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			called := func(ctx context.Context) {
+				calls++
+				if ctx != t.Context() {
+					t.Fatal("request context was not forwarded")
+				}
+			}
+			svc := &serviceStub{
+				setBudget:   func(ctx context.Context, _ ledger.Budget) error { called(ctx); return tc.serviceErr },
+				listBudgets: func(ctx context.Context) ([]ledger.Budget, error) { called(ctx); return nil, tc.serviceErr },
+				addTransaction: func(ctx context.Context, _ ledger.Transaction) (ledger.Transaction, error) {
+					called(ctx)
+					return ledger.Transaction{}, tc.serviceErr
+				},
+				listTransactions: func(ctx context.Context) ([]ledger.Transaction, error) { called(ctx); return nil, tc.serviceErr },
+				report: func(ctx context.Context, _, _ string) ([]ledger.ReportSummary, error) {
+					called(ctx)
+					return nil, tc.serviceErr
+				},
+			}
+			response := performJSONRequest(t, NewHandler(svc).Routes(), tc.method, tc.path, tc.body)
+			requireErrorResponse(t, response, tc.status, tc.message)
+			if calls != 1 {
+				t.Fatalf("service calls = %d, want 1", calls)
+			}
+		})
+	}
+}
 
-		transaction := performJSONRequest(t, router, http.MethodPost, "/api/transactions", `{"amount":450,"category":"еда","description":"ланч","date":"2025-09-10"}`)
-		if transaction.Code != http.StatusCreated {
-			t.Fatalf("POST /api/transactions status = %d, want %d; body = %s", transaction.Code, http.StatusCreated, transaction.Body.String())
+func TestEmptyLists(t *testing.T) {
+	svc := &serviceStub{
+		listBudgets:      func(context.Context) ([]ledger.Budget, error) { return nil, nil },
+		listTransactions: func(context.Context) ([]ledger.Transaction, error) { return nil, nil },
+	}
+	for _, path := range []string{"/api/budgets", "/api/transactions"} {
+		response := performJSONRequest(t, NewHandler(svc).Routes(), http.MethodGet, path, "")
+		if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != "[]" {
+			t.Fatalf("GET %s: status = %d; body = %s", path, response.Code, response.Body.String())
 		}
-		requireJSONContentType(t, transaction)
+		requireJSONContentType(t, response)
+	}
+}
 
-		var created TransactionResponse
-		if err := json.NewDecoder(transaction.Body).Decode(&created); err != nil {
-			t.Fatalf("decode created transaction: %v", err)
+func TestReportSummary(t *testing.T) {
+	svc := &serviceStub{report: func(ctx context.Context, from, to string) ([]ledger.ReportSummary, error) {
+		if ctx != t.Context() || from != "2025-09-01" || to != "2025-09-30" {
+			t.Fatalf("report arguments = %q, %q; context forwarded = %v", from, to, ctx == t.Context())
 		}
-		want := TransactionResponse{ID: 1, Amount: 450, Category: "еда", Description: "ланч", Date: "2025-09-10"}
-		if created != want {
-			t.Fatalf("created transaction = %+v, want %+v", created, want)
-		}
+		return []ledger.ReportSummary{{Category: "еда", Amount: 450}}, nil
+	}}
+	response := performJSONRequest(t, NewHandler(svc).Routes(), http.MethodGet, "/api/reports/summary?from=2025-09-01&to=2025-09-30", "")
+	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `[{"category":"еда","amount":450}]` {
+		t.Fatalf("status = %d; body = %s", response.Code, response.Body.String())
+	}
+	requireJSONContentType(t, response)
+}
 
-		list := performJSONRequest(t, router, http.MethodGet, "/api/transactions", "")
-		if list.Code != http.StatusOK {
-			t.Fatalf("GET /api/transactions status = %d, want %d", list.Code, http.StatusOK)
-		}
-		requireJSONContentType(t, list)
-
-		var transactions []TransactionResponse
-		if err := json.NewDecoder(list.Body).Decode(&transactions); err != nil {
-			t.Fatalf("decode transaction list: %v", err)
-		}
-		if len(transactions) != 1 || transactions[0] != want {
-			t.Fatalf("transaction list = %+v, want [%+v]", transactions, want)
-		}
-	})
-
-	t.Run("exceeded", func(t *testing.T) {
-		ledger.Reset()
-		t.Cleanup(ledger.Reset)
-
-		budget := performJSONRequest(t, router, http.MethodPost, "/api/budgets", `{"category":"еда","limit":500}`)
-		if budget.Code != http.StatusCreated {
-			t.Fatalf("creating budget status = %d, want %d", budget.Code, http.StatusCreated)
-		}
-		withinLimit := performJSONRequest(t, router, http.MethodPost, "/api/transactions", `{"amount":400,"category":"еда","date":"2025-09-10"}`)
-		if withinLimit.Code != http.StatusCreated {
-			t.Fatalf("transaction within budget status = %d, want %d", withinLimit.Code, http.StatusCreated)
-		}
-
-		exceeded := performJSONRequest(t, router, http.MethodPost, "/api/transactions", `{"amount":200,"category":"еда","date":"2025-09-11"}`)
-		requireErrorResponse(t, exceeded, http.StatusConflict, "budget exceeded")
-		transactions, err := ledger.ListTransactions()
-		if err != nil {
-			t.Fatalf("ListTransactions() returned an error: %v", err)
-		}
-		if got := len(transactions); got != 1 {
-			t.Fatalf("transaction count after rejected request = %d, want 1", got)
-		}
-	})
-
-	t.Run("bad_json", func(t *testing.T) {
-		ledger.Reset()
-		t.Cleanup(ledger.Reset)
-
-		response := performJSONRequest(t, router, http.MethodPost, "/api/transactions", `{"amount":`)
-		requireErrorResponse(t, response, http.StatusBadRequest, "invalid request body")
-	})
+func TestReportMissingQueryParameters(t *testing.T) {
+	for _, query := range []string{"", "?from=2025-09-01", "?to=2025-09-30"} {
+		response := performJSONRequest(t, NewHandler(&serviceStub{}).Routes(), http.MethodGet, "/api/reports/summary"+query, "")
+		requireErrorResponse(t, response, http.StatusBadRequest, "from and to query parameters are required")
+	}
 }

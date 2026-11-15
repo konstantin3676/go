@@ -1,5 +1,5 @@
-// Package memory provides isolated in-memory repositories for tests and the
-// legacy Ledger API's mode without a database. Production uses PostgreSQL.
+// Package memory provides isolated in-memory repositories for tests.
+// Production uses PostgreSQL and does not fall back to in-memory storage.
 package memory
 
 import (
@@ -18,13 +18,6 @@ type Store struct {
 
 func NewStore() *Store {
 	return &Store{budgets: make(map[string]domain.Budget)}
-}
-
-func (s *Store) Reset() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.budgets = make(map[string]domain.Budget)
-	s.transactions = nil
 }
 
 type BudgetRepository struct {

@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
+	"time"
 
 	"ledger/internal/domain"
 )
@@ -25,8 +27,11 @@ func (c *reportCalculator) Summary(ctx context.Context, from, to string) ([]doma
 	}
 	workCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
+	stopHeartbeat := startReportHeartbeat(workCtx, 400*time.Millisecond, log.Default())
+	defer stopHeartbeat()
 	categories, err := c.source.Categories(workCtx, from, to)
 	if err != nil {
+		cancel(err)
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -62,4 +67,37 @@ func (c *reportCalculator) Summary(ctx context.Context, from, to string) ([]doma
 		return nil, err
 	}
 	return results, nil
+}
+
+// The returned function joins the heartbeat goroutine, so no heartbeat outlives
+// its calculation. The ticker is owned and stopped by that goroutine.
+func startReportHeartbeat(ctx context.Context, interval time.Duration, logger *log.Logger) func() {
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer close(stopped)
+		defer func() {
+			ticker.Stop()
+			if err := context.Cause(ctx); err != nil {
+				logger.Printf("report heartbeat stopped; calculation interrupted (ctx.Done): %v", err)
+			} else {
+				logger.Print("report heartbeat stopped; calculation finished")
+			}
+		}()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				logger.Print("report calculation in progress")
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-stopped
+	}
 }

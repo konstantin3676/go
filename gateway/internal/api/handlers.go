@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"ledger"
 )
@@ -97,6 +98,12 @@ func (h *Handler) HandleReportSummary(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "from and to query parameters are required")
 		return
 	}
+	fromDate, fromErr := time.Parse(time.DateOnly, from)
+	toDate, toErr := time.Parse(time.DateOnly, to)
+	if fromErr != nil || toErr != nil || fromDate.After(toDate) {
+		writeError(w, http.StatusBadRequest, "from and to must be valid dates with from <= to")
+		return
+	}
 	report, err := h.service.GetReportSummary(r.Context(), from, to)
 	if err != nil {
 		var validationErr *ledger.ValidationError
@@ -108,7 +115,11 @@ func (h *Handler) HandleReportSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, report)
+	summary := make(map[string]float64, len(report))
+	for _, item := range report {
+		summary[item.Category] = item.Amount
+	}
+	writeJSON(w, http.StatusOK, summary)
 }
 
 func writeServiceError(w http.ResponseWriter, err error) {

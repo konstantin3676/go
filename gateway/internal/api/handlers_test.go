@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"ledger"
 )
@@ -188,8 +189,7 @@ func TestServiceErrorResponses(t *testing.T) {
 		{"transaction write failed", "POST", "/api/transactions", `{"amount":100,"category":"еда"}`, errors.New("insert transaction: unavailable"), 500, "insert transaction: unavailable"},
 		{"budget list failed", "GET", "/api/budgets", "", errors.New("list budgets: unavailable"), 500, "list budgets: unavailable"},
 		{"transaction list failed", "GET", "/api/transactions", "", errors.New("list transactions: unavailable"), 500, "list transactions: unavailable"},
-		{"invalid report date", "GET", "/api/reports/summary?from=bad&to=2025-09-30", "", &ledger.ValidationError{Err: errors.New("invalid from date: bad")}, 400, "from and to must be valid dates with from <= to"},
-		{"invalid report range", "GET", "/api/reports/summary?from=2025-09-30&to=2025-09-01", "", &ledger.ValidationError{Err: errors.New("from and to must be valid dates with from <= to")}, 400, "from and to must be valid dates with from <= to"},
+		{"report validation error", "GET", "/api/reports/summary?from=2025-09-01&to=2025-09-30", "", &ledger.ValidationError{Err: errors.New("invalid period")}, 400, "from and to must be valid dates with from <= to"},
 		{"report failed", "GET", "/api/reports/summary?from=2025-09-01&to=2025-09-30", "", errors.New("query report summary: unavailable"), 500, "query report summary: unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -241,13 +241,67 @@ func TestReportSummary(t *testing.T) {
 		if ctx != t.Context() || from != "2025-09-01" || to != "2025-09-30" {
 			t.Fatalf("report arguments = %q, %q; context forwarded = %v", from, to, ctx == t.Context())
 		}
-		return []ledger.ReportSummary{{Category: "еда", Amount: 450}}, nil
+		return []ledger.ReportSummary{{Category: "еда", Amount: 450.5}, {Category: "транспорт", Amount: 100}}, nil
 	}}
 	response := performJSONRequest(t, NewHandler(svc).Routes(), http.MethodGet, "/api/reports/summary?from=2025-09-01&to=2025-09-30", "")
-	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `[{"category":"еда","amount":450}]` {
+	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"еда":450.5,"транспорт":100}` {
 		t.Fatalf("status = %d; body = %s", response.Code, response.Body.String())
 	}
 	requireJSONContentType(t, response)
+}
+
+func TestReportInvalidQueryParametersDoNotCallService(t *testing.T) {
+	for _, query := range []string{
+		"?from=bad&to=2025-09-30",
+		"?from=2025-09-01&to=bad",
+		"?from=2025-02-29&to=2025-09-30",
+		"?from=2025-09-30&to=2025-09-01",
+		"?from=2025-9-01&to=2025-09-30",
+	} {
+		t.Run(query, func(t *testing.T) {
+			response := performJSONRequest(t, NewHandler(&serviceStub{}).Routes(), "GET", "/api/reports/summary"+query, "")
+			requireErrorResponse(t, response, http.StatusBadRequest, "from and to must be valid dates with from <= to")
+		})
+	}
+}
+
+func TestReportEmptyAndSingleDay(t *testing.T) {
+	svc := &serviceStub{report: func(_ context.Context, from, to string) ([]ledger.ReportSummary, error) {
+		if from != to {
+			t.Fatal("single day range not forwarded")
+		}
+		return nil, nil
+	}}
+	response := performJSONRequest(t, NewHandler(svc).Routes(), "GET", "/api/reports/summary?from=2025-09-10&to=2025-09-10", "")
+	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{}` {
+		t.Fatalf("empty report = %d %s", response.Code, response.Body.String())
+	}
+	requireJSONContentType(t, response)
+}
+
+func TestReportDeadline(t *testing.T) {
+	finished := false
+	svc := &serviceStub{report: func(ctx context.Context, _, _ string) ([]ledger.ReportSummary, error) {
+		<-ctx.Done()
+		finished = true
+		return nil, fmt.Errorf("report interrupted: %w", ctx.Err())
+	}}
+	handler := TimeoutMiddleware(10*time.Millisecond, NewHandler(svc).Routes())
+	response := performJSONRequest(t, handler, "GET", "/api/reports/summary?from=2025-09-01&to=2025-09-30", "")
+	requireErrorResponse(t, response, http.StatusGatewayTimeout, timeoutMessage)
+	if !finished {
+		t.Fatal("report still running after response")
+	}
+}
+
+func TestReportWrappedCancellation(t *testing.T) {
+	for _, err := range []error{context.Canceled, context.DeadlineExceeded} {
+		svc := &serviceStub{report: func(context.Context, string, string) ([]ledger.ReportSummary, error) {
+			return nil, fmt.Errorf("report: %w", err)
+		}}
+		response := performJSONRequest(t, NewHandler(svc).Routes(), "GET", "/api/reports/summary?from=2025-09-01&to=2025-09-30", "")
+		requireErrorResponse(t, response, http.StatusGatewayTimeout, timeoutMessage)
+	}
 }
 
 func TestReportMissingQueryParameters(t *testing.T) {

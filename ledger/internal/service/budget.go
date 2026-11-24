@@ -13,8 +13,11 @@ func (s *service) SetBudget(ctx context.Context, budget domain.Budget) error {
 	if err := budget.Validate(); err != nil {
 		return &ValidationError{Err: err}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	release, err := s.categoryLocks.acquire(ctx, budget.Category)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.budgets.Upsert(ctx, budget)
 }
 

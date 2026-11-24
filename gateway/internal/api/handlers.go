@@ -21,6 +21,7 @@ func NewHandler(service ledger.Service) *Handler {
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/transactions", h.HandleCreateTransaction)
+	mux.HandleFunc("POST /api/transactions/bulk", h.HandleImportTransactions)
 	mux.HandleFunc("GET /api/transactions", h.HandleListTransactions)
 	mux.HandleFunc("POST /api/budgets", h.HandleCreateBudget)
 	mux.HandleFunc("GET /api/budgets", h.HandleListBudgets)

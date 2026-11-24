@@ -8,6 +8,8 @@ import (
 type (
 	Budget          = domain.Budget
 	Transaction     = domain.Transaction
+	ImportSummary   = service.ImportSummary
+	ImportError     = service.ImportError
 	ReportSummary   = domain.ReportSummary
 	Validatable     = domain.Validatable
 	Service         = service.Service

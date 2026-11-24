@@ -12,8 +12,11 @@ func (s *service) AddTransaction(ctx context.Context, tx domain.Transaction) (do
 	if err := tx.Validate(); err != nil {
 		return domain.Transaction{}, &ValidationError{Err: err}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	release, err := s.categoryLocks.acquire(ctx, tx.Category)
+	if err != nil {
+		return domain.Transaction{}, err
+	}
+	defer release()
 
 	budget, err := s.budgets.GetByCategory(ctx, tx.Category)
 	if err != nil && !errors.Is(err, domain.ErrBudgetNotFound) {

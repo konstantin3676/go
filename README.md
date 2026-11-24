@@ -249,6 +249,7 @@ PostgreSQL (`QueryContext`, `QueryRowContext`, `ExecContext`) и Redis. При �
 | Метод | Путь | Описание | Успех |
 |-------|------|----------|-------|
 | POST | `/api/transactions` | Создать транзакцию | 201 Created |
+| POST | `/api/transactions/bulk` | Импортировать пакет транзакций | 200 OK (в том числе при отклонении отдельных записей) |
 | GET | `/api/transactions` | Список транзакций | 200 OK |
 | POST | `/api/budgets` | Создать или обновить бюджет | 201 Created |
 | GET | `/api/budgets` | Список бюджетов | 200 OK |
@@ -281,6 +282,47 @@ curl -X POST http://localhost:8080/api/transactions \
 ```json
 {"id":1,"amount":450,"category":"еда","description":"ланч","date":"2025-09-10"}
 ```
+
+**Пакетный импорт транзакций:**
+
+`POST /api/transactions/bulk` принимает JSON-массив объектов в том же формате,
+что и одиночный POST: `amount`, `category`, `description`, `date`. Необязательный
+query-параметр `workers` задаёт размер пула (целое число от 1 до 32, по умолчанию 4).
+Некорректный JSON, тело не в виде массива объектов или некорректный `workers`
+дают `400` без запуска импорта.
+
+```bash
+curl -i -X POST 'http://localhost:8080/api/transactions/bulk?workers=4' \
+  -H 'Content-Type: application/json' \
+  -d '[
+    {"amount":120,"category":"книги","description":"учебник","date":"2025-09-10"},
+    {"amount":-20,"category":"книги","description":"ошибка суммы","date":"2025-09-10"}
+  ]'
+```
+
+Ожидаемый ответ на новой БД (`200 OK`):
+
+```json
+{"accepted":1,"rejected":1,"errors":[{"index":1,"error":"transaction amount must be positive"}]}
+```
+
+`accepted` — число сохранённых транзакций, `rejected` — число отклонённых (например,
+из-за валидации или превышения бюджета). Индексы в `errors` начинаются с нуля и
+отсортированы по возрастанию. Воркеры не гарантируют порядок сохранения: если на
+всю категорию бюджета не хватает, заранее неизвестно, какая из записей пройдёт первой.
+
+Пустой пакет с настройками по умолчанию возвращает `200 OK` и
+`{"accepted":0,"rejected":0,"errors":[]}`:
+
+```bash
+curl -i -X POST 'http://localhost:8080/api/transactions/bulk' \
+  -H 'Content-Type: application/json' -d '[]'
+```
+
+При таймауте или отмене Gateway возвращает `504` с прежним JSON
+`{"error":"request timed out or canceled"}`. Ledger возвращает частичную сводку
+вызывающему коду; уже сохранённые транзакции не откатываются. Не повторяйте
+весь пакет после `504` без проверки записей: повторный запрос может создать дубли.
 
 **Ошибка валидации (400):**
 

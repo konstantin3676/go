@@ -17,11 +17,12 @@ import (
 )
 
 type serviceStub struct {
-	setBudget        func(context.Context, ledger.Budget) error
-	listBudgets      func(context.Context) ([]ledger.Budget, error)
-	addTransaction   func(context.Context, ledger.Transaction) (ledger.Transaction, error)
-	listTransactions func(context.Context) ([]ledger.Transaction, error)
-	report           func(context.Context, string, string) ([]ledger.ReportSummary, error)
+	setBudget          func(context.Context, ledger.Budget) error
+	listBudgets        func(context.Context) ([]ledger.Budget, error)
+	addTransaction     func(context.Context, ledger.Transaction) (ledger.Transaction, error)
+	importTransactions func(context.Context, []ledger.Transaction, int) (ledger.ImportSummary, error)
+	listTransactions   func(context.Context) ([]ledger.Transaction, error)
+	report             func(context.Context, string, string) ([]ledger.ReportSummary, error)
 }
 
 var _ ledger.Service = (*serviceStub)(nil)
@@ -36,6 +37,10 @@ func (s *serviceStub) ListBudgets(ctx context.Context) ([]ledger.Budget, error) 
 
 func (s *serviceStub) AddTransaction(ctx context.Context, tx ledger.Transaction) (ledger.Transaction, error) {
 	return s.addTransaction(ctx, tx)
+}
+
+func (s *serviceStub) ImportTransactions(ctx context.Context, txs []ledger.Transaction, workers int) (ledger.ImportSummary, error) {
+	return s.importTransactions(ctx, txs, workers)
 }
 
 func (s *serviceStub) ListTransactions(ctx context.Context) ([]ledger.Transaction, error) {

@@ -20,6 +20,7 @@ func NewHandler(service ledger.Service) *Handler {
 
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ping", handlePing)
 	mux.HandleFunc("POST /api/transactions", h.HandleCreateTransaction)
 	mux.HandleFunc("POST /api/transactions/bulk", h.HandleImportTransactions)
 	mux.HandleFunc("GET /api/transactions", h.HandleListTransactions)
@@ -27,6 +28,11 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /api/budgets", h.HandleListBudgets)
 	mux.HandleFunc("GET /api/reports/summary", h.HandleReportSummary)
 	return mux
+}
+
+func handlePing(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte("pong"))
 }
 
 func (h *Handler) HandleCreateTransaction(w http.ResponseWriter, r *http.Request) {

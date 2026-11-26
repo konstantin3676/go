@@ -87,6 +87,17 @@ func requireErrorResponse(t *testing.T, response *httptest.ResponseRecorder, sta
 	}
 }
 
+func TestPing(t *testing.T) {
+	router := NewHandler(nil).Routes()
+	response := performJSONRequest(t, router, http.MethodGet, "/ping", "")
+	if response.Code != http.StatusOK || response.Body.String() != "pong" {
+		t.Fatalf("GET /ping: status = %d, body = %q; want 200 and pong", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want text/plain; charset=utf-8", got)
+	}
+}
+
 func TestBudgetHandlers(t *testing.T) {
 	var saved ledger.Budget
 	setCalls, listCalls := 0, 0

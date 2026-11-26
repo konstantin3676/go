@@ -44,17 +44,11 @@ func New(ctx context.Context) (Service, func() error, error)
 
 ## Запуск зависимостей
 
-```bash
-docker run --name cashcraft-postgres \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=cashapp \
-  -p 5432:5432 -d postgres:16-alpine
+В [Docker Compose](../README.md#запуск-через-docker-compose) PostgreSQL и Redis
+запускаются вместе с Gateway, который использует Ledger как библиотеку. Для
+запуска Ledger через Go см. [локальный запуск зависимостей](../README.md#postgresql-и-redis-для-локального-запуска-без-compose).
 
-docker run --name cashcraft-redis -p 6379:6379 -d redis:7-alpine
-```
-
-Переменные окружения:
+Переменные окружения для локального подключения:
 
 ```bash
 export DATABASE_URL='postgres://postgres:postgres@localhost:5432/cashapp?sslmode=disable'
@@ -63,14 +57,17 @@ export REDIS_DB=0
 export REDIS_PASSWORD=''
 ```
 
-Вместо `DATABASE_URL` можно задать `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS` и
-`DB_NAME`. Значения по умолчанию: `localhost`, `5432`, `postgres`, `postgres` и
-`cashapp`.
+Если `DATABASE_URL` не задана или пуста, Ledger собирает строку подключения
+из `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS` и `DB_NAME`. Значения по умолчанию:
+`localhost`, `5432`, `postgres`, `postgres` и `cashapp`. Эти переменные
+настраивают подключение Ledger и не создают пользователя или базу в PostgreSQL.
 
 Для Redis значения по умолчанию: `localhost:6379`, БД `0`, пустой пароль.
 Пустое, отрицательное или некорректное значение `REDIS_DB` заменяется на `0`.
 
 ## Миграции
+
+Из каталога `ledger`:
 
 ```bash
 go install github.com/pressly/goose/v3/cmd/goose@latest
@@ -83,7 +80,9 @@ goose -dir ./migrations postgres "$DATABASE_URL" down
 
 Фабрика `ledger.New` не создаёт таблицы и не применяет миграции.
 
-## Запуск
+## Отдельный запуск
+
+Из каталога `ledger`:
 
 ```bash
 go run ./cmd
@@ -95,6 +94,8 @@ SIGINT/SIGTERM. На подключение выделено 10 секунд; р
 
 Для работы API отдельно запускать эту команду не нужно: Gateway сам вызывает
 фабрику и использует Ledger как Go-библиотеку в своём процессе.
+Команда [сборки образа Ledger](../README.md#сборка-образов-и-отдельный-запуск-gateway)
+приведена в корневом README. Отдельного сервиса Ledger в Compose пока нет.
 
 ## Конкурентный отчёт и отмена
 

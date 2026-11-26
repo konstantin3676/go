@@ -79,7 +79,102 @@ JSON. `timeout` читается из `REQUEST_TIMEOUT`, по умолчанию
 - Redis 7 или новее
 - Goose для миграций
 
-## PostgreSQL и Redis
+## Запуск через Docker Compose
+
+Понадобятся Docker с BuildKit и Docker Compose 2.17 или новее (для
+`additional_contexts`). Все команды в этом разделе выполняются из корня
+репозитория. В Compose запускаются PostgreSQL, Redis и Gateway; Ledger
+встроен в Gateway как Go-библиотека и отдельным контейнером не запускается.
+
+1. Запустите PostgreSQL и Redis и дождитесь статуса `healthy`:
+
+   ```bash
+   docker compose up -d --wait db redis
+   docker compose ps
+   ```
+
+   Если порт `5432` уже занят, перед запуском задайте `export DB_HOST_PORT=15432`.
+   Это меняет только порт на хосте; внутри сети Compose PostgreSQL по-прежнему
+   доступен как `db:5432`.
+
+2. Примените миграции Goose **с хоста, до запуска Gateway**:
+
+   ```bash
+   export DATABASE_URL="postgres://postgres:postgres@localhost:${DB_HOST_PORT:-5432}/cashapp?sslmode=disable"
+   goose -dir ./ledger/migrations postgres "$DATABASE_URL" up
+   ```
+
+   Если Goose не установлен: `go install github.com/pressly/goose/v3/cmd/goose@latest`.
+
+3. Соберите и запустите Gateway, затем проверьте healthcheck и `/ping`:
+
+   ```bash
+   docker compose up -d --build --wait gateway
+   docker compose ps
+   docker compose exec -T gateway wget -qO- http://localhost:8080/ping
+   curl -fsS http://localhost:8080/ping
+   ```
+
+   В `docker compose ps` у Gateway должен быть статус `healthy`; обе команды
+   проверки должны вывести `pong`.
+
+Учебные настройки в `docker-compose.yml`: `POSTGRES_USER=postgres`,
+`POSTGRES_PASSWORD=postgres`, `POSTGRES_DB=cashapp`. Gateway получает
+`DATABASE_URL=postgres://postgres:postgres@db:5432/cashapp?sslmode=disable`
+и `REDIS_ADDR=redis:6379`. Эти значения заданы в Compose: переменные
+`DB_USER`, `DB_PASS` и `DB_NAME` с хоста их не переопределяют. Ledger читает
+`DB_*` только при отсутствии `DATABASE_URL`. PostgreSQL применяет `POSTGRES_*`
+при инициализации пустого тома; изменение этих переменных не меняет учётные
+данные или имя базы в уже существующем томе.
+
+### Быстрая проверка API
+
+```bash
+CATEGORY="compose-check-$(date +%s)-$$"
+BASE_URL=http://localhost:8080
+
+# 201: создать бюджет; 200: прочитать список бюджетов.
+curl -fsi "$BASE_URL/api/budgets" -H 'Content-Type: application/json' \
+  -d "{\"category\":\"$CATEGORY\",\"limit\":1000}"
+curl -fsi "$BASE_URL/api/budgets"
+
+# 201: создать транзакцию; 200: импортировать ещё одну и прочитать обе.
+curl -fsi "$BASE_URL/api/transactions" -H 'Content-Type: application/json' \
+  -d "{\"amount\":450,\"category\":\"$CATEGORY\",\"date\":\"2025-09-10\"}"
+curl -fsi "$BASE_URL/api/transactions/bulk" -H 'Content-Type: application/json' \
+  -d "[{\"amount\":50,\"category\":\"$CATEGORY\",\"date\":\"2025-09-11\"}]"
+curl -fsi "$BASE_URL/api/transactions"
+
+# 200: сумма для новой категории — 500.
+curl -fsi "$BASE_URL/api/reports/summary?from=2025-09-10&to=2025-09-11"
+```
+
+Если отчёт за эти даты был недавно запрошен, дождитесь истечения TTL кеша
+(30 секунд), чтобы увидеть новые записи.
+
+### Сборка образов и отдельный запуск Gateway
+
+Оставьте `db` и `redis` запущенными, а Gateway в Compose остановите, чтобы
+освободить порт `8080`. Сеть `cashcraft_default` создаётся при запуске Compose
+с именем проекта по умолчанию (`cashcraft`).
+
+```bash
+docker build --build-context ledger_src=./ledger -t cashcraft-gateway:local ./gateway
+docker build -t cashcraft-ledger:local ./ledger
+
+docker compose stop gateway
+docker run --rm -d --name cashcraft-gateway-local --network cashcraft_default \
+  -p 8080:8080 \
+  -e 'DATABASE_URL=postgres://postgres:postgres@db:5432/cashapp?sslmode=disable' \
+  -e REDIS_ADDR=redis:6379 \
+  cashcraft-gateway:local
+curl -fsS http://localhost:8080/ping
+
+docker stop cashcraft-gateway-local
+docker compose down  # Именованный том с данными PostgreSQL сохраняется.
+```
+
+## PostgreSQL и Redis для локального запуска без Compose
 
 Быстрый запуск PostgreSQL и Redis через Docker:
 
@@ -119,7 +214,7 @@ goose -dir ./ledger/migrations postgres "$DATABASE_URL" up
 goose -dir ./ledger/migrations postgres "$DATABASE_URL" down
 ```
 
-## Запуск Gateway
+## Локальный запуск Gateway
 
 Из корня репозитория выполните:
 
@@ -225,7 +320,7 @@ REQUEST_TIMEOUT=50ms go run .
 **504 Gateway Timeout**, `Content-Type: application/json; charset=utf-8` и:
 
 ```json
-{"error":"request timed out or canceled"}
+{ "error": "request timed out or canceled" }
 ```
 
 Контекст передаётся через `r.WithContext(ctx)` в обработчики и далее в Ledger,
@@ -242,26 +337,27 @@ PostgreSQL (`QueryContext`, `QueryRowContext`, `ExecContext`) и Redis. При �
 
 ## API Gateway
 
-Все ответы возвращаются с заголовком `Content-Type: application/json; charset=utf-8`. Ошибки возвращаются в формате `{"error":"описание ошибки"}`.
+Ответы `/api/*` возвращаются с заголовком `Content-Type: application/json; charset=utf-8`. Ошибки возвращаются в формате `{"error":"описание ошибки"}`. `GET /ping` возвращает `pong` как обычный текст.
 
 ### Эндпоинты
 
-| Метод | Путь | Описание | Успех |
-|-------|------|----------|-------|
-| POST | `/api/transactions` | Создать транзакцию | 201 Created |
-| POST | `/api/transactions/bulk` | Импортировать пакет транзакций | 200 OK (в том числе при отклонении отдельных записей) |
-| GET | `/api/transactions` | Список транзакций | 200 OK |
-| POST | `/api/budgets` | Создать или обновить бюджет | 201 Created |
-| GET | `/api/budgets` | Список бюджетов | 200 OK |
-| GET | `/api/reports/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | Сводный отчёт | 200 OK |
+| Метод | Путь                                                 | Описание                       | Успех                                                 |
+| ----- | ---------------------------------------------------- | ------------------------------ | ----------------------------------------------------- |
+| GET   | `/ping`                                              | Проверка доступности Gateway   | 200 OK                                                |
+| POST  | `/api/transactions`                                  | Создать транзакцию             | 201 Created                                           |
+| POST  | `/api/transactions/bulk`                             | Импортировать пакет транзакций | 200 OK (в том числе при отклонении отдельных записей) |
+| GET   | `/api/transactions`                                  | Список транзакций              | 200 OK                                                |
+| POST  | `/api/budgets`                                       | Создать или обновить бюджет    | 201 Created                                           |
+| GET   | `/api/budgets`                                       | Список бюджетов                | 200 OK                                                |
+| GET   | `/api/reports/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | Сводный отчёт                  | 200 OK                                                |
 
 ### Коды ошибок
 
-| Код | Ситуация |
-|-----|----------|
-| 400 | Ошибка валидации или некорректное тело запроса |
-| 409 | Превышение бюджета |
-| 500 | Внутренняя ошибка сервера |
+| Код | Ситуация                                           |
+| --- | -------------------------------------------------- |
+| 400 | Ошибка валидации или некорректное тело запроса     |
+| 409 | Превышение бюджета                                 |
+| 500 | Внутренняя ошибка сервера                          |
 | 504 | Таймаут запроса или отмена операции через контекст |
 
 ### Примеры cURL
@@ -279,8 +375,15 @@ curl -X POST http://localhost:8080/api/transactions \
 ```
 
 Ответ (201 Created):
+
 ```json
-{"id":1,"amount":450,"category":"еда","description":"ланч","date":"2025-09-10"}
+{
+  "id": 1,
+  "amount": 450,
+  "category": "еда",
+  "description": "ланч",
+  "date": "2025-09-10"
+}
 ```
 
 **Пакетный импорт транзакций:**
@@ -303,7 +406,11 @@ curl -i -X POST 'http://localhost:8080/api/transactions/bulk?workers=4' \
 Ожидаемый ответ на новой БД (`200 OK`):
 
 ```json
-{"accepted":1,"rejected":1,"errors":[{"index":1,"error":"transaction amount must be positive"}]}
+{
+  "accepted": 1,
+  "rejected": 1,
+  "errors": [{ "index": 1, "error": "transaction amount must be positive" }]
+}
 ```
 
 `accepted` — число сохранённых транзакций, `rejected` — число отклонённых (например,
@@ -333,8 +440,9 @@ curl -X POST http://localhost:8080/api/transactions \
 ```
 
 Ответ:
+
 ```json
-{"error":"transaction amount must be positive"}
+{ "error": "transaction amount must be positive" }
 ```
 
 **Список транзакций:**
@@ -344,8 +452,17 @@ curl http://localhost:8080/api/transactions
 ```
 
 Ответ (200 OK):
+
 ```json
-[{"id":1,"amount":450,"category":"еда","description":"ланч","date":"2025-09-10"}]
+[
+  {
+    "id": 1,
+    "amount": 450,
+    "category": "еда",
+    "description": "ланч",
+    "date": "2025-09-10"
+  }
+]
 ```
 
 **Создание бюджета:**
@@ -357,8 +474,9 @@ curl -X POST http://localhost:8080/api/budgets \
 ```
 
 Ответ (201 Created):
+
 ```json
-{"category":"еда","limit":1000}
+{ "category": "еда", "limit": 1000 }
 ```
 
 **Ошибка валидации бюджета (400):**
@@ -370,8 +488,9 @@ curl -X POST http://localhost:8080/api/budgets \
 ```
 
 Ответ:
+
 ```json
-{"error":"budget limit must be positive"}
+{ "error": "budget limit must be positive" }
 ```
 
 **Список бюджетов:**
@@ -381,8 +500,9 @@ curl http://localhost:8080/api/budgets
 ```
 
 Ответ (200 OK):
+
 ```json
-[{"category":"еда","limit":1000}]
+[{ "category": "еда", "limit": 1000 }]
 ```
 
 **Превышение бюджета (409):**
@@ -398,8 +518,9 @@ curl -X POST http://localhost:8080/api/transactions \
 ```
 
 Ответ:
+
 ```json
-{"error":"budget exceeded"}
+{ "error": "budget exceeded" }
 ```
 
 **Сводный отчёт:**
@@ -414,7 +535,7 @@ curl 'http://localhost:8080/api/reports/summary?from=2025-09-01&to=2025-09-30'
 Ответ — JSON-объект, где ключом служит категория, а значением — сумма расходов:
 
 ```json
-{"еда":1234.56,"транспорт":789}
+{ "еда": 1234.56, "транспорт": 789 }
 ```
 
 Числа приведены для примера и зависят от сохранённых расходов. Если расходов
@@ -499,8 +620,9 @@ curl -i 'http://localhost:8080/api/reports/summary?from=2025-09-01&to=2025-09-30
 ```
 
 Если отчёт за этот период был закеширован раньше, дождитесь истечения его TTL
-(30 секунд) перед проверкой новых сумм. Затем остановите Gateway через Ctrl+C,
-снова выполните `go run .` из каталога `gateway` и повторите GET-запросы:
+(30 секунд) перед проверкой новых сумм. Затем выполните `docker compose restart gateway`
+из корня репозитория. При локальном запуске вместо этого остановите Gateway через
+Ctrl+C и снова выполните `go run .` из каталога `gateway`. Повторите GET-запросы:
 бюджет, ID и транзакции должны сохраниться. Новая категория не требует сброса
 данных или `TRUNCATE`.
 
@@ -511,14 +633,24 @@ curl -i 'http://localhost:8080/api/reports/summary?from=2025-09-01&to=2025-09-30
 
 ### Проверка таймаута и остановки heartbeat
 
+Сценарий изменения `REQUEST_TIMEOUT` ниже рассчитан на [локальный запуск Gateway](#локальный-запуск-gateway):
+текущий Compose не передаёт эту переменную с хоста в контейнер Gateway.
+
 1. С таймаутом `2s` выполните запрос отчёта из примера выше: ожидаются `200`
-   и суммы по категориям. Затем перезапустите Gateway с `REQUEST_TIMEOUT=50ms`.
+   и суммы по категориям. Затем остановите Gateway и запустите
+   `REQUEST_TIMEOUT=50ms go run .` из каталога `gateway`.
 2. Для воспроизводимого таймаута нужна задержка: быстрый запрос, особенно из
    Redis, может успеть даже за 1 мс. На **локальной учебной БД**, в отдельном
    терминале откройте psql и временно заблокируйте чтение таблицы:
 
    ```bash
    docker exec -it cashcraft-postgres psql -U postgres -d cashapp
+   ```
+
+   Если Gateway подключён к базе из Compose, откройте `psql` в ней:
+
+   ```bash
+   docker compose exec db psql -U postgres -d cashapp
    ```
 
    ```sql
@@ -528,6 +660,7 @@ curl -i 'http://localhost:8080/api/reports/summary?from=2025-09-01&to=2025-09-30
 
    После сообщения `LOCK TABLE` оставьте эту сессию открытой. Блокировка не
    меняет данные, но временно задерживает и другие обращения к таблице.
+
 3. Выберите незакешированный диапазон. Например, дождитесь истечения TTL
    отчёта (30 секунд без запросов к нему) и выполните:
 
@@ -544,6 +677,7 @@ curl -i 'http://localhost:8080/api/reports/summary?from=2025-09-01&to=2025-09-30
    При таймауте 50 мс сообщение раз в 400 мс может не успеть появиться — это
    нормально. Чтобы увидеть периодический heartbeat, запустите запрос с `2s`
    и удерживайте блокировку дольше 400 мс.
+
 4. В терминале psql проверьте отсутствие оставшихся ожидающих SQL-запросов:
 
    ```sql
